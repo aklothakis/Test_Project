@@ -98,6 +98,17 @@ module toroidal_propeller(
 module naca_blades2D(n, height, length, width, thickness, hole_offset,
                      blade_direction, offset, blade_safe_direction,
                      naca, blunt, naca_n) {
+    // Pre-compute inner NACA shape for collision avoidance cuts
+    inner_chord = length - thickness;
+    inner_raw = naca_airfoil_points(naca, inner_chord, naca_n);
+    inner_pts = (blunt > 0) ?
+        blunt_trailing_edge(inner_raw, blunt, inner_chord) : inner_raw;
+    inner_ys = [for (p = inner_pts) p[1]];
+    inner_y_center = (max(inner_ys) + min(inner_ys)) / 2;
+    inner_y_height = max(inner_ys) - min(inner_ys);
+    inner_y_scale = (inner_y_height > 0) ?
+        (width - thickness) / inner_y_height : 1;
+
     for (a = [0 : n - 1]) {
         difference() {
             rotate([0, 0, a * (360 / n)]) {
@@ -113,13 +124,13 @@ module naca_blades2D(n, height, length, width, thickness, hole_offset,
                     );
             }
 
-            // Collision avoidance: cut away material that would intersect
-            // the adjacent blade's swept volume
+            // Collision avoidance: NACA-shaped cut matching adjacent blade
             cw_ccw_mult = blade_direction * blade_safe_direction;
             rotate([0, 0, (a + cw_ccw_mult) * (360 / n)])
-                translate([length / 2 + hole_offset + offset, 0, 0])
-                    scale([1, (width - thickness) / (length - thickness)])
-                        circle(d = length - thickness);
+                translate([thickness / 2 + hole_offset + offset,
+                           -inner_y_center * inner_y_scale, 0])
+                    scale([1, inner_y_scale])
+                        polygon(inner_pts);
         }
     }
 }
@@ -137,35 +148,44 @@ module naca_blades2D(n, height, length, width, thickness, hole_offset,
 // elliptical blade, but now using a NACA shape for the outer boundary.
 // ============================================================================
 module naca_blade2D(length, width, thickness, hole_offset, naca, blunt, naca_n) {
-    // Generate airfoil points directly so we can compute exact Y bounds
-    // (functions imported from naca_airfoil.scad via use<>)
+    // --- Outer airfoil ---
     raw_pts = naca_airfoil_points(naca, length, naca_n);
     pts = (blunt > 0) ? blunt_trailing_edge(raw_pts, blunt, length) : raw_pts;
 
-    // Compute actual Y bounds for proper centering and scaling.
-    // A cambered airfoil (e.g. NACA 2412) is NOT symmetric about y=0;
-    // the inner ring cutout IS centered at y=0, so we must vertically
-    // center the airfoil to ensure material exists on both sides of the
-    // cutout — otherwise the ring only forms on one side.
+    // Center vertically: cambered airfoils are asymmetric about y=0,
+    // but the ring cutout must be centered at y=0 for both sides to
+    // have material.
     ys = [for (p = pts) p[1]];
-    y_min = min(ys);
-    y_max = max(ys);
-    y_center = (y_max + y_min) / 2;
-    y_height = y_max - y_min;
-
-    // Scale Y so that the total profile height matches blade_width
+    y_center = (max(ys) + min(ys)) / 2;
+    y_height = max(ys) - min(ys);
     y_scale = (y_height > 0) ? width / y_height : 1;
 
+    // --- Inner airfoil (ring cutout) ---
+    // Must follow the same NACA contour as the outer shape, just
+    // slightly smaller, so the ring band is uniform. An elliptical
+    // cutout would leave exposed tips at the leading/trailing edges.
+    inner_chord = length - thickness;
+    inner_raw = naca_airfoil_points(naca, inner_chord, naca_n);
+    inner_pts = (blunt > 0) ?
+        blunt_trailing_edge(inner_raw, blunt, inner_chord) : inner_raw;
+    inner_ys = [for (p = inner_pts) p[1]];
+    inner_y_center = (max(inner_ys) + min(inner_ys)) / 2;
+    inner_y_height = max(inner_ys) - min(inner_ys);
+    inner_y_scale = (inner_y_height > 0) ?
+        (width - thickness) / inner_y_height : 1;
+
     difference() {
-        // Outer airfoil shape — centered at y=0, scaled to blade_width
+        // Outer airfoil — centered at y=0, scaled to blade_width
         translate([0, -y_center * y_scale, 0])
             scale([1, y_scale])
                 polygon(pts);
 
-        // Inner cutout (creates the ring/toroid shape)
-        translate([length / 2 + hole_offset, 0, 0])
-            scale([1, (width - thickness) / (length - thickness)])
-                circle(d = length - thickness);
+        // Inner cutout — same NACA shape, reduced by thickness,
+        // shifted by thickness/2 + hole_offset to match original offset
+        translate([thickness / 2 + hole_offset,
+                   -inner_y_center * inner_y_scale, 0])
+            scale([1, inner_y_scale])
+                polygon(inner_pts);
     }
 }
 
