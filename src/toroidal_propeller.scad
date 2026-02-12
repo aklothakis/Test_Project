@@ -137,27 +137,30 @@ module naca_blades2D(n, height, length, width, thickness, hole_offset,
 // elliptical blade, but now using a NACA shape for the outer boundary.
 // ============================================================================
 module naca_blade2D(length, width, thickness, hole_offset, naca, blunt, naca_n) {
-    // The NACA airfoil is generated at chord = 1, then we scale it.
-    // We need the airfoil to span 'length' in X and 'width' in Y.
-    // The natural NACA thickness-to-chord ratio sets Y extent;
-    // we scale Y independently to achieve the desired width.
+    // Generate airfoil points directly so we can compute exact Y bounds
+    // (functions imported from naca_airfoil.scad via use<>)
+    raw_pts = naca_airfoil_points(naca, length, naca_n);
+    pts = (blunt > 0) ? blunt_trailing_edge(raw_pts, blunt, length) : raw_pts;
 
-    // Parse NACA digits to get thickness ratio for scaling calculation
-    t_ratio = (naca % 100) / 100;  // e.g. 12 -> 0.12
-    // Approximate max half-thickness for scaling reference
-    // (NACA max thickness is at ~30% chord)
-    approx_max_y = t_ratio * 0.5;  // rough max camber+thickness extent
-    y_scale = (width / length) / (approx_max_y * 2);
+    // Compute actual Y bounds for proper centering and scaling.
+    // A cambered airfoil (e.g. NACA 2412) is NOT symmetric about y=0;
+    // the inner ring cutout IS centered at y=0, so we must vertically
+    // center the airfoil to ensure material exists on both sides of the
+    // cutout — otherwise the ring only forms on one side.
+    ys = [for (p = pts) p[1]];
+    y_min = min(ys);
+    y_max = max(ys);
+    y_center = (y_max + y_min) / 2;
+    y_height = y_max - y_min;
+
+    // Scale Y so that the total profile height matches blade_width
+    y_scale = (y_height > 0) ? width / y_height : 1;
 
     difference() {
-        // Outer airfoil shape
-        translate([length / 2, 0, 0])
-            // Center the airfoil: NACA points go from x=0..chord,
-            // shift by -chord/2 so it's centered on the translate above
-            translate([-length / 2, 0, 0])
-                scale([1, y_scale])
-                    naca_airfoil_2d(naca = naca, chord = length,
-                                    blunt = blunt, n = naca_n);
+        // Outer airfoil shape — centered at y=0, scaled to blade_width
+        translate([0, -y_center * y_scale, 0])
+            scale([1, y_scale])
+                polygon(pts);
 
         // Inner cutout (creates the ring/toroid shape)
         translate([length / 2 + hole_offset, 0, 0])
